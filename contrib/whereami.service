@@ -1,0 +1,33 @@
+# An example unit: gunicorn on the loopback address, a reverse proxy
+# that logs people in stands in front (see nginx.conf). Threads, not
+# processes only: a lookup is a stream that stays open while switches
+# are asked.
+#
+# /etc/whereami/env (readable by the service only):
+#   WHEREAMI_LEASES_DSN=host=db.example.net dbname=dhcp user=whereami_read sslmode=verify-full ...
+#   WHEREAMI_DSN=host=db.example.net dbname=whereami user=whereami sslmode=verify-full ...
+# /etc/whereami/secrets.json   the switches' SNMP credentials (see whereami/credentials.py)
+# /etc/whereami/key            at least 32 random bytes; signs the tickets
+#                              (head -c 48 /dev/urandom | base64 > key)
+# Once:  WHEREAMI_DSN=... python3 -m whereami.initdb
+[Unit]
+Description=whereami - which switch and port am I plugged into
+Documentation=https://github.com/dhtech/whereami
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=whereami
+EnvironmentFile=/etc/whereami/env
+Environment=WHEREAMI_KEY_FILE=/etc/whereami/key
+Environment=WHEREAMI_TIMEZONE=Europe/Stockholm
+ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8000 --worker-class gthread --workers 2 --threads 8 --timeout 120 --access-logfile - whereami.wsgi:app
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}Status - {{ title }}{% endblock %}
+{% block main %}
+    <section class="card wide">
+      <h1>Switches</h1>
+      <p class="totals">
+        <strong>{{ counts.OK }}</strong> of <strong>{{ total }}</strong> confirmed{% if counts.PROBLEM %},
+        <strong class="bad">{{ counts.PROBLEM }}</strong> with a problem{% endif %},
+        <strong>{{ counts.UNKNOWN }}</strong> to be verified.
+      </p>
+      {% if total %}
+      <progress max="{{ total }}" value="{{ counts.OK }}">{{ counts.OK }} of {{ total }}</progress>
+      {% endif %}
+      {% if by_user %}
+      <p class="totals">Confirmed by:
+        {% for name, count in by_user %}<span class="chip">{{ name }} <strong>{{ count }}</strong></span>{% endfor %}
+      </p>
+      {% endif %}
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>Switch</th><th>Layer</th><th>Status</th><th>Comment</th><th>Port</th><th>By</th><th>When</th></tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr class="state-{{ row.status|lower }}">
+              <td class="value">{{ row.switch }}</td>
+              <td>{{ row.layer }}</td>
+              <td><span class="state">{% if row.status == 'OK' %}Confirmed{% elif row.status == 'PROBLEM' %}Problem{% else %}To be verified{% endif %}</span></td>
+              <td class="wrap">{{ row.comment }}</td>
+              <td class="value">{{ row.interface }}</td>
+              <td>{{ row.username }}</td>
+              <td>{{ row.at|when }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">The plan has no access or dist switch for this site.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+{% endblock %}

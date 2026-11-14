@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block main %}
+    <section class="card">
+      <h1>That did not work</h1>
+      <p class="notice problem">{{ message }}</p>
+      <p><a href="{{ url_for('index') }}">Look yourself up again</a></p>
+    </section>
+{% endblock %}

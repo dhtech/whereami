@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% block main %}
+    <section class="card" id="lookup" data-stream="{{ url_for('stream') }}"
+             data-confirm="{{ url_for('confirm') }}" data-describe="{{ url_for('describe') }}">
+      <h1>Where am I?</h1>
+      <ol id="steps" class="steps" aria-live="polite">
+        <li class="working" id="waiting">Looking you up &hellip;</li>
+      </ol>
+
+      <div id="answer" hidden>
+        <p class="found">
+          <span class="label">You are on</span>
+          <strong id="switch" class="value"></strong>
+          <span class="label">port</span>
+          <strong id="interface" class="value"></strong>
+        </p>
+        <dl class="facts">
+          <dt>Layer</dt><dd id="layer"></dd>
+          <dt>VLAN</dt><dd id="vlan" class="value"></dd>
+          <dt>Port description</dt><dd id="alias"></dd>
+          <dt>Your address</dt><dd id="ip" class="value"></dd>
+          <dt>Your MAC</dt><dd id="mac" class="value"></dd>
+        </dl>
+        <p id="said" class="notice" hidden></p>
+
+        <form id="confirm" class="act">
+          <h2>Is the switch where it should be?</h2>
+          <label for="comment">Comment <span class="hint">(needed when something is wrong)</span></label>
+          <input type="text" id="comment" name="comment" maxlength="{{ comment_max }}" autocomplete="off">
+          <div class="buttons">
+            <button type="submit" name="verdict" value="ok" class="primary">Yes, confirm it</button>
+            <button type="submit" name="verdict" value="problem" class="warn">Something is wrong</button>
+          </div>
+          <p id="confirm-result" class="notice" hidden></p>
+        </form>
+
+        <form id="describe" class="act" hidden>
+          <h2>Port description <span class="hint">(optional)</span></h2>
+          <label for="description">Write a description to <span id="describe-port" class="value"></span> on the dist switch</label>
+          <input type="text" id="description" name="description" maxlength="60" autocomplete="off">
+          <p class="hint">Letters a-z, digits, spaces and _ . , : / @ # ( ) + - ; at most 60 characters.</p>
+          <div class="buttons">
+            <button type="submit" class="primary">Write it to the switch</button>
+          </div>
+          <p id="describe-result" class="notice" hidden></p>
+        </form>
+      </div>
+      <p><a href="{{ url_for('index') }}" id="again" hidden>Look me up again</a></p>
+    </section>
+
+    <section class="card" id="ipv6" data-own="{{ ipv6_own }}" data-outside="{{ ipv6_outside }}"{% if not ipv6_own and not ipv6_outside %} hidden{% endif %}>
+      <h2>IPv6</h2>
+      <ul class="checks">
+        {% if ipv6_own %}<li id="ipv6-own" class="working">To this server over IPv6 &hellip;</li>{% endif %}
+        {% if ipv6_outside %}<li id="ipv6-outside" class="working">To the internet over IPv6 &hellip;</li>{% endif %}
+      </ul>
+    </section>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

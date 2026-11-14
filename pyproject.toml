@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whereami"
+description = "Which switch and port am I plugged into? For the crew that builds an event's network"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = [
+    "flask>=3.0",
+    "psycopg>=3.1",
+    "psycopg-pool>=3.1",
+]
+
+[project.optional-dependencies]
+# asking switches needs ONE of these (and the Net-SNMP library on the
+# machine): the Net-SNMP project's own binding, or ezsnmp
+snmp = ["python3-netsnmp>=1.1a2"]
+ezsnmp = ["ezsnmp>=1.1,<2"]
+test = ["pytest"]
+
+[project.urls]
+Source = "https://github.com/dhtech/whereami"
+
+[tool.setuptools]
+packages = ["whereami"]
+
+[tool.setuptools.package-data]
+whereami = ["templates/*.html", "static/*", "schema.sql"]
+
+[tool.setuptools.dynamic]
+version = {attr = "whereami.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
