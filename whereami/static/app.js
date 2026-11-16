@@ -48,6 +48,20 @@
     notice(el, words, word.confirmed ? 'good' : 'problem');
   }
 
+  // the log: every message of the lookup as it came, for finding out
+  // why one went wrong. The ticket is left out - it is a key, not a fact.
+  var log = byId('log');
+  var started = Date.now();
+
+  function record(message) {
+    if (!log) { return; }
+    var shown = {};
+    Object.keys(message).forEach(function (name) {
+      if (name !== 'ticket') { shown[name] = message[name]; }
+    });
+    log.textContent += '+' + ((Date.now() - started) / 1000).toFixed(2) + 's ' + JSON.stringify(shown) + '\n';
+  }
+
   function handle(message) {
     if (message.type === 'lease') {
       step('Your address ' + message.ip + ' has a lease for the MAC ' + message.mac + '.');
@@ -83,6 +97,7 @@
     var ended = false;
     source.onmessage = function (event) {
       var message = JSON.parse(event.data);
+      record(message);
       handle(message);
       if (message.type === 'done' || message.type === 'error') {
         ended = true;
@@ -93,6 +108,7 @@
       // the browser would ask again by itself: one lookup is enough
       source.close();
       if (!ended) {
+        record({ type: 'cut off' });
         step('The lookup was cut off. Try again.', 'failed');
         finish(true);
       }

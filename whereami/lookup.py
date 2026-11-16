@@ -17,7 +17,11 @@ A port that is a trunk is the way to another switch, not where the
 client is - that answer is refused.
 
 lookup() yields what it learns step by step (the page shows the steps
-as they come) and ends with a 'done' or an 'error'. It talks to the
+as they come) and ends with a 'done' or an 'error'. Two things are
+there for the page's log, for whoever has to find out why a lookup
+went wrong: the lease step carries option 82 as the relay sent it
+(hex), and an 'asking' step says which switch is asked over SNMP,
+before it is asked. It talks to the
 lease database, the plan and the switches through three objects handed
 in - nothing here opens a connection.
 """
@@ -42,6 +46,10 @@ def error(message: str) -> dict:
     return {'type': 'error', 'message': message}
 
 
+def _hex(value) -> str | None:
+    return None if value is None else bytes(value).hex()
+
+
 def lookup(ip: str, leases, plan, snmp) -> Iterator[dict]:
     """Steps towards the switch and port of IP.
 
@@ -56,7 +64,9 @@ def lookup(ip: str, leases, plan, snmp) -> Iterator[dict]:
                     % ip)
         return
     mac = lease['mac']
-    yield {'type': 'lease', 'ip': ip, 'mac': mac}
+    yield {'type': 'lease', 'ip': ip, 'mac': mac,
+           'remote_id': _hex(lease.get('remote_id')),
+           'circuit_id': _hex(lease.get('circuit_id'))}
 
     remote = option82.remote_id(lease.get('remote_id'))
     circuit = option82.circuit_id(lease.get('circuit_id'))
@@ -79,6 +89,7 @@ def lookup(ip: str, leases, plan, snmp) -> Iterator[dict]:
             # a Juniper says the port itself
             port = Port(circuit.interface or '')
         else:
+            yield {'type': 'asking', 'switch': switch.name}
             port = snmp.find_port(switch, circuit.vlan, mac)
         if port is None:
             yield error('%s does not see your MAC address (%s) on that '
@@ -97,6 +108,7 @@ def lookup(ip: str, leases, plan, snmp) -> Iterator[dict]:
             return
         candidates = []
         for switch in switches:
+            yield {'type': 'asking', 'switch': switch.name}
             port = snmp.find_port(switch, circuit.vlan, mac)
             if port is not None:
                 candidates.append((switch, port))

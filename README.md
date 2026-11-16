@@ -21,6 +21,13 @@ This is a new program on the ideas of the old `whereami3`.
 - **The status page** (`/status`) and the same as data
   (`/api/switches`; `/analytics/switch.status` in the old whereami's
   shape): every switch of the site, confirmed or not, by whom.
+- **The leaderboard** (`/leaderboard`): who has confirmed the most
+  switches. A switch counts for whoever said the newest word about it;
+  equal numbers share a place.
+- **The log**: under the answer, every step of the lookup as the server
+  sent it - the lease's option 82 as the relay sent it, which switch
+  was asked over SNMP, how long each step took. For finding out why a
+  lookup went wrong.
 - **The IPv6 check**: your browser asks an IPv6-only name of the server
   and a service outside, and says whether each answered.
 

@@ -65,9 +65,9 @@ def test_no_lease_no_answer():
 def test_a_relay_that_names_itself_is_asked_for_the_port():
     snmp = Snmp({'d23-a': Port('GigabitEthernet1/0/5', 'table 23', 10105)})
     steps = run(lease(named(b'D23-A')), snmp=snmp)
-    assert [s['type'] for s in steps] == ['lease', 'relay', 'done']
+    assert [s['type'] for s in steps] == ['lease', 'relay', 'asking', 'done']
     assert steps[1]['relay'] == 'd23-a' and steps[1]['vlan'] == 123
-    assert steps[2] == {
+    assert steps[3] == {
         'type': 'done', 'switch': 'd23-a.event.dreamhack.local',
         'layer': 'access', 'interface': 'GigabitEthernet1/0/5',
         'alias': 'table 23', 'ifindex': 10105, 'vlan': 123, 'module': 1,
@@ -84,6 +84,7 @@ def test_a_juniper_says_the_port_itself():
     assert steps[-1]['ifindex'] is None
     # nobody was asked
     assert snmp.asked == []
+    assert 'asking' not in [s['type'] for s in steps]
 
 
 def test_a_relay_that_gave_its_mac_means_asking_the_vlans_switches():
@@ -93,6 +94,20 @@ def test_a_relay_that_gave_its_mac_means_asking_the_vlans_switches():
     assert steps[-1]['switch'] == D24.name
     # the first did not have it, the second did, and then it stopped
     assert [who for who, _, _ in snmp.asked] == ['d23-a', 'd24-a']
+
+
+def test_for_the_log_option_82_as_it_came_and_who_is_asked():
+    snmp = Snmp({'d24-a': Port('GigabitEthernet1/0/7', '', 10107)})
+    steps = run(lease(RELAY_MAC), snmp=snmp)
+    # the lease step carries what the relay sent, untouched, as hex
+    assert steps[0] == {'type': 'lease', 'ip': '10.50.23.7', 'mac': MAC,
+                        'remote_id': '0006aabbccddeeff', 'circuit_id': '0004007b0105'}
+    # each switch is named before it is asked, in the order asked
+    assert [s['switch'] for s in steps if s['type'] == 'asking'] == [D23.name, D24.name]
+    assert [s['type'] for s in steps] == ['lease', 'relay', 'asking', 'asking', 'done']
+    # a lease without option 82 says so in the log too
+    steps = run(lease(None, None))
+    assert steps[0]['remote_id'] is None and steps[0]['circuit_id'] is None
 
 
 def test_nobody_sees_the_mac():

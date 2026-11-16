@@ -118,7 +118,8 @@ def stream(world, headers=ME):
 # --- nobody without a name --------------------------------------------------
 
 def test_nothing_without_a_name(world):
-    for path in ('/', '/stream', '/status', '/api/switches', '/analytics/switch.status'):
+    for path in ('/', '/stream', '/status', '/leaderboard', '/api/switches',
+                 '/analytics/switch.status'):
         assert world.client.get(path).status_code == 401, path
         assert world.client.get(path, headers={'X-Remote-User': 'a b;c'}).status_code == 401
     for path in ('/confirm', '/describe'):
@@ -141,7 +142,7 @@ def test_two_things_are_open(world):
 def test_the_lookup_is_for_the_visitors_own_address(world):
     steps = stream(world)
     assert world.leases.asked == [IP]
-    assert [s['type'] for s in steps] == ['lease', 'relay', 'done']
+    assert [s['type'] for s in steps] == ['lease', 'relay', 'asking', 'done']
     done = steps[-1]
     assert (done['switch'], done['interface'], done['layer']) == (
         DIST.name, 'GigabitEthernet1/0/5', 'dist')
@@ -266,11 +267,72 @@ def test_the_status_of_every_switch_of_the_plan(world):
     assert page.index(D23.name) < page.index(DIST.name)           # problems first
 
 
+# --- the leaderboard --------------------------------------------------------
+
+class ManySwitches(Plan):
+    names = ['d%02d-a.event.dreamhack.local' % n for n in range(1, 8)]
+
+    def switches(self):
+        return [Switch(name, 'access', '10.9.1.%d' % i) for i, name in enumerate(self.names)]
+
+
+def leaderboard(world, headers=ME):
+    """The table's rows as lists of cell texts."""
+    import re
+    page = world.client.get('/leaderboard', headers=headers).get_data(as_text=True)
+    body = page[page.index('<tbody>'):page.index('</tbody>')]
+    return [[re.sub(r'<[^>]+>', '', cell).strip() for cell in re.findall(r'<td[^>]*>(.*?)</td>', row, re.S)]
+            for row in re.findall(r'<tr[^>]*>(.*?)</tr>', body, re.S)]
+
+
+def test_the_leaderboard_before_anybody_confirmed(world):
+    got = world.client.get('/leaderboard', headers=ME)
+    assert got.status_code == 200
+    page = got.get_data(as_text=True)
+    assert 'Nobody has confirmed a switch yet' in page
+    assert '<strong>0</strong> of <strong>2</strong>' in page
+
+
+def test_the_leaderboard_ranks_by_switches_confirmed(world):
+    world.plan = ManySwitches()
+    world.app = create_app(world.leases, world.store, world.plan, world.switches,
+                           {'TESTING': True, 'TIMEZONE': 'Europe/Stockholm'})
+    world.client = world.app.test_client()
+    n = ManySwitches.names
+    for switch, ok, who in ((n[0], True, 'bob'), (n[1], True, 'bob'), (n[2], True, 'bob'),
+                            (n[3], True, 'alice'), (n[4], True, 'alice'),
+                            (n[5], True, 'carol'), (n[6], False, 'carol'),
+                            # a later word takes the switch: n[5] is dave's now, and
+                            # n[4] became a problem that is still alice's
+                            (n[5], True, 'dave'), (n[4], False, 'alice')):
+        world.store.confirm(switch, ok, '' if ok else 'wrong row', 'Gi0/1', who)
+    assert leaderboard(world) == [
+        ['1', 'bob', '3', '0', '2026-11-20 13:00'],
+        # equal numbers share a place; a problem found breaks the order, then the name
+        ['2', 'alice you', '1', '1', '2026-11-20 13:00'],
+        ['2', 'dave', '1', '0', '2026-11-20 13:00'],
+        ['4', 'carol', '0', '1', '2026-11-20 13:00']]
+    # the visitor's own row is marked, nobody else's
+    assert [row[1] for row in leaderboard(world, {'X-Remote-User': 'dave', 'X-Real-IP': IP})] == [
+        'bob', 'alice', 'dave you', 'carol']
+    page = world.client.get('/leaderboard', headers=ME).get_data(as_text=True)
+    assert '<strong>5</strong> of <strong>7</strong>' in page
+    assert 'aria-current="page">Leaderboard' in page
+
+
+def test_a_switch_that_left_the_plan_counts_for_nobody(world):
+    world.store.confirm('gone-a.event.dreamhack.local', True, '', 'Gi0/1', 'bob')
+    world.store.confirm(DIST.name, True, '', 'Gi1/0/5', 'alice')
+    assert [row[:3] for row in leaderboard(world)] == [['1', 'alice you', '1']]
+
+
 def test_the_page_and_its_headers(world):
     got = world.client.get('/', headers=ME)
     assert got.status_code == 200
     page = got.get_data(as_text=True)
     assert 'alice' in page and 'app.js' in page
+    # the log is there, closed and empty until the lookup fills it
+    assert '<details class="log">' in page and '<pre id="log"></pre>' in page
     csp = got.headers['Content-Security-Policy']
     assert "script-src 'self'" in csp and "connect-src 'self';" in csp
     assert got.headers['Cache-Control'] == 'no-store'

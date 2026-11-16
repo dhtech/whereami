@@ -6,6 +6,7 @@
   /confirm    (POST)        "this switch is where it should be" (or not)
   /describe   (POST)        write a description to your dist port
   /status                   every switch of the site and who confirmed it
+  /leaderboard              who has confirmed the most switches
   /api/switches             the same as JSON (for a map)
   /analytics/switch.status  {switch: "OK" | "UNKNOWN"} - the old shape
   /ipv6                     the address you came from (the IPv6 check)
@@ -165,6 +166,29 @@ def create_app(leases=None, store=None, plan=None, switches=None,
             })
         return rows
 
+    def leaders(rows: list[dict]) -> list[dict]:
+        """The people, by how many switches they hold: a switch counts
+        for whoever said the newest word about it - "confirmed" when
+        that word is that it is where it should be, "problems" when it
+        is a problem. Most confirmed first; equal numbers share a
+        place (1, 1, 3)."""
+        people: dict[str, dict] = {}
+        for row in rows:
+            if row['status'] == 'UNKNOWN':
+                continue
+            person = people.setdefault(row['username'], {
+                'username': row['username'], 'confirmed': 0, 'problems': 0, 'latest': None})
+            person['confirmed' if row['status'] == 'OK' else 'problems'] += 1
+            if row['at'] is not None and (person['latest'] is None or row['at'] > person['latest']):
+                person['latest'] = row['at']
+        out = sorted(people.values(),
+                     key=lambda p: (-p['confirmed'], -p['problems'], p['username']))
+        for position, person in enumerate(out, 1):
+            before = out[position - 2] if position > 1 else None
+            person['place'] = before['place'] if before and before['confirmed'] == person['confirmed'] \
+                else position
+        return out
+
     def word_about(switch_name: str) -> dict | None:
         said = store.latest().get(switch_name.lower())
         if said is None:
@@ -284,6 +308,12 @@ def create_app(leases=None, store=None, plan=None, switches=None,
         rows.sort(key=lambda r: (order[r['status']], r['switch']))
         return render_template('status.html', rows=rows, counts=counts, total=len(rows),
                                by_user=sorted(by_user.items(), key=lambda kv: (-kv[1], kv[0])))
+
+    @app.get('/leaderboard')
+    def leaderboard():
+        rows = switch_rows()
+        return render_template('leaderboard.html', leaders=leaders(rows), total=len(rows),
+                               confirmed=sum(1 for r in rows if r['status'] == 'OK'))
 
     @app.get('/api/switches')
     def api_switches():

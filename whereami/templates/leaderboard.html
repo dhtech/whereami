@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block title %}Leaderboard - {{ title }}{% endblock %}
+{% block main %}
+    <section class="card wide">
+      <h1>Leaderboard</h1>
+      <p class="totals">
+        <strong>{{ confirmed }}</strong> of <strong>{{ total }}</strong> switches confirmed.
+        A switch counts for whoever said the newest word about it.
+      </p>
+      <div class="scroll">
+        <table class="leaders">
+          <thead>
+            <tr><th>#</th><th>Who</th><th>Confirmed</th><th>Problems found</th><th>Latest</th></tr>
+          </thead>
+          <tbody>
+            {% for person in leaders %}
+            <tr class="place-{{ person.place if person.place <= 3 else 'rest' }}{% if person.username == user %} me{% endif %}">
+              <td class="place">{{ person.place }}</td>
+              <td>{{ person.username }}{% if person.username == user %} <span class="you">you</span>{% endif %}</td>
+              <td class="score">{{ person.confirmed }}</td>
+              <td>{{ person.problems }}</td>
+              <td>{{ person.latest|when }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">Nobody has confirmed a switch yet. Plug in, open
+              <a href="{{ url_for('index') }}">Where am I</a>, and be the first.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+{% endblock %}

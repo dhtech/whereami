@@ -46,6 +46,11 @@
         </form>
       </div>
       <p><a href="{{ url_for('index') }}" id="again" hidden>Look me up again</a></p>
+      <details class="log">
+        <summary>Log</summary>
+        <p class="hint">Every step of the lookup as the server sent it, with the time since the page asked. For whoever has to find out why a lookup went wrong.</p>
+        <pre id="log"></pre>
+      </details>
     </section>
 
     <section class="card" id="ipv6" data-own="{{ ipv6_own }}" data-outside="{{ ipv6_outside }}"{% if not ipv6_own and not ipv6_outside %} hidden{% endif %}>
