@@ -86,6 +86,9 @@
       }
       show(byId('answer'), true);
       finish(false);
+    } else if (message.type === 'unanswered') {
+      // a switch that gave no answer: said, and the lookup goes on
+      step(message.message, 'failed');
     } else if (message.type === 'error') {
       step(message.message, 'failed');
       finish(true);

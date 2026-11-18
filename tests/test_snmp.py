@@ -207,12 +207,60 @@ def test_the_transport_asks_the_library(monkeypatch):
     assert Library.made[-1].sets == [('.1.3.5', 'text', 'OCTETSTR')]
     monkeypatch.setattr(Library, 'takes', False)
     assert transport.set('sw', how, '.1.3.5', 'text') is False
-    # a switch that is away is "nothing", and the log does not get what
-    # the library put in its error
+    # a switch that is away is NOT "nothing": the transport says that no
+    # answer came, and the log does not get what the library put in its
+    # error
     monkeypatch.setattr(Library, 'away', True)
     assert log.lines == []
-    assert transport.get('sw', how, '.1.3') is None
-    assert log.lines == ['snmp get on sw: TimeoutError']
+    with pytest.raises(snmp.NoAnswer) as caught:
+        transport.get('sw', how, '.1.3')
+    assert caught.value.why == 'silent'
+    assert log.lines == ['snmp get on sw: no answer to go on (silent, '
+                         'TimeoutError)']
+    assert 'priv-word' not in str(caught.value)
+
+
+def test_what_the_librarys_errors_mean():
+    # the classes and the words Debian 13's python3-ezsnmp 1.1.0 gave
+    # against a real snmpd, case by case
+    def raised(name, text, base=Exception):
+        return type(name, (base,), {})(text)
+    timeout = 'timed out while connecting to remote host'
+    assert snmp.why(raised('EzSNMPTimeoutError', timeout)) == 'silent'
+    assert snmp.why(raised('EzSNMPError', 'Unknown user name')) == 'refused'
+    assert snmp.why(raised('EzSNMPError', 'Authentication failure (incorrect '
+                           'password, community or key)')) == 'refused'
+    assert snmp.why(raised('EzSNMPConnectionError',
+                           "couldn't create SNMP handle")) == 'unreachable'
+    assert snmp.why(raised('EzSNMPError', 'something new')) == 'failed'
+    assert snmp.why(ValueError('x')) == 'failed'
+
+
+class Quiet:
+    """A transport whose switch gives no answer to the questions whose
+    OID starts with one of SILENT_TO."""
+
+    def __init__(self, answers, silent_to, why='silent'):
+        self.answers, self.silent_to, self.why = answers, silent_to, why
+
+    def get(self, host, how, oid):
+        if any(oid.startswith(start) for start in self.silent_to):
+            raise snmp.NoAnswer(self.why)
+        return self.answers.get(oid)
+
+
+def test_a_switch_that_gives_no_answer_is_not_one_that_does_not_see_the_mac():
+    from whereami.lookup import Unanswered
+    for kind in ('silent', 'refused', 'unreachable', 'failed'):
+        quiet = Quiet(table(), (snmp.FDB_PORT,), kind)
+        with pytest.raises(Unanswered) as caught:
+            snmp.Switches(CREDS, quiet).find_port(DIST, 491, MAC)
+        assert caught.value.switch == DIST.name and caught.value.why == kind
+    # it answered where the MAC is; a later question it does not answer
+    # (the port's description) does not undo that
+    quiet = Quiet(table(), (snmp.IF_ALIAS, snmp.TRUNK_STATUS))
+    port = snmp.Switches(CREDS, quiet).find_port(DIST, 491, MAC)
+    assert port == Port('GigabitEthernet1/0/12', '', 10112, False)
 
 
 # --- the same on the netsnmp binding ---------------------------------------
@@ -260,6 +308,7 @@ def test_the_netsnmp_transport_speaks_the_bindings_words():
     assert lib.asked[-1][1] == ('.1.3.5', '10112', 'text', 'OCTETSTR')
     lib.takes = 0
     assert transport.set('sw', how, '.1.3.5.10112', 'text') is False
+    # this binding cannot say WHY nothing came: it stays "nothing"
     lib.away = True
     assert transport.get('sw', how, '.1.3') is None
     assert log.lines == ['snmp get on sw: OSError']

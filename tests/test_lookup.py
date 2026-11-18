@@ -2,7 +2,7 @@
 # From an address to a switch and a port, with stand-ins for the lease
 # database, the plan and the switches.
 
-from whereami.lookup import Port, lookup
+from whereami.lookup import Port, Unanswered, lookup
 from whereami.plan import Switch
 
 MAC = '00:11:22:aa:bb:cc'
@@ -44,7 +44,10 @@ class Snmp:
 
     def find_port(self, switch, vlan, mac):
         self.asked.append((switch.name.split('.')[0], vlan, mac))
-        return self.ports.get(switch.name.split('.')[0])
+        port = self.ports.get(switch.name.split('.')[0])
+        if isinstance(port, str):       # a switch that gives no answer
+            raise Unanswered(switch.name, port)
+        return port
 
 
 def run(lease, plan=None, snmp=None):
@@ -116,6 +119,57 @@ def test_nobody_sees_the_mac():
     assert 'None of the access switches on VLAN 123' in steps[-1]['message']
     steps = run(lease(named(b'd23-a')))
     assert 'does not see your MAC address' in steps[-1]['message']
+
+
+def test_a_named_switch_that_does_not_answer_is_said_as_that():
+    # "no answer" is not "does not see your MAC"
+    steps = run(lease(named(b'd23-a')), snmp=Snmp({'d23-a': 'silent'}))
+    assert [s['type'] for s in steps] == ['lease', 'relay', 'asking', 'error']
+    said = steps[-1]['message']
+    assert said.startswith(D23.name + ' did not answer over SNMP')
+    assert 'VLAN 123 is not on it' in said
+    assert 'cannot say which of its ports' in said
+    assert 'does not see your MAC' not in said
+    steps = run(lease(named(b'd23-a')), snmp=Snmp({'d23-a': 'refused'}))
+    assert 'turned down whereami\'s SNMP login' in steps[-1]['message']
+    steps = run(lease(named(b'd23-a')), snmp=Snmp({'d23-a': 'unreachable'}))
+    assert 'its name leads to no address' in steps[-1]['message']
+    steps = run(lease(named(b'd23-a')), snmp=Snmp({'d23-a': 'something'}))
+    assert 'the reason is in the server\'s log' in steps[-1]['message']
+
+
+def test_an_access_switch_that_does_not_answer_is_named_and_passed():
+    found = Port('GigabitEthernet1/0/7', '', 10107)
+    steps = run(lease(RELAY_MAC), snmp=Snmp({'d23-a': 'silent',
+                                             'd24-a': found}))
+    assert [s['type'] for s in steps] == ['lease', 'relay', 'asking',
+                                          'unanswered', 'asking', 'done']
+    assert steps[3] == {
+        'type': 'unanswered', 'switch': D23.name, 'why': 'silent',
+        'message': D23.name + ' did not answer over SNMP: it is away, or it '
+        'does not let whereami ask (its SNMP settings, or VLAN 123 is not on '
+        'it).'}
+    assert steps[-1]['switch'] == D24.name
+
+
+def test_nobody_sees_the_mac_and_one_did_not_answer():
+    steps = run(lease(RELAY_MAC), snmp=Snmp({'d23-a': 'silent'}))
+    said = steps[-1]['message']
+    assert steps[-1]['type'] == 'error'
+    assert 'that answered sees your MAC address' in said
+    assert said.endswith('gave no answer over SNMP: %s.' % D23.name)
+
+
+def test_no_access_switch_answers():
+    steps = run(lease(RELAY_MAC), snmp=Snmp({'d23-a': 'silent',
+                                             'd24-a': 'refused'}))
+    assert [s['type'] for s in steps] == ['lease', 'relay', 'asking',
+                                          'unanswered', 'asking',
+                                          'unanswered', 'error']
+    said = steps[-1]['message']
+    assert said.startswith('No access switch on VLAN 123 gave an answer')
+    assert D23.name in said and D24.name in said
+    assert 'sees your MAC' not in said
 
 
 def test_an_uplink_is_not_where_you_are():

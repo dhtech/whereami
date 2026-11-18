@@ -28,6 +28,12 @@ This is a new program on the ideas of the old `whereami3`.
   sent it - the lease's option 82 as the relay sent it, which switch
   was asked over SNMP, how long each step took. For finding out why a
   lookup went wrong.
+- **A switch that does not answer** is said as that, not as "does not
+  see your MAC address": it did not answer over SNMP (away, or it does
+  not let whereami ask), it turned down whereami's login (SNMPv3), or
+  its name leads to no address. The page names the switch, the lookup
+  goes on to the next one, and the server's log gets a warning. (With
+  the ezsnmp library; the `netsnmp` binding cannot tell the two apart.)
 - **The IPv6 check**: your browser asks an IPv6-only name of the server
   and a service outside, and says whether each answered.
 

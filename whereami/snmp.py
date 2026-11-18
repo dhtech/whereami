@@ -26,13 +26,23 @@ libsnmp - what the old whereami used) when it is installed, otherwise
 python3-ezsnmp or its ancestor python3-easysnmp (Debian packages both).
 Either is imported when first used, so that everything else loads and
 is tested without them.
+
+A switch that gives no answer to work with is not a switch that does
+not see the MAC. The ezsnmp transport says which it
+was: nothing came back in time (away, a community or a privacy password
+that is not the switch's, a VLAN it has not - a switch stays silent to
+all of these), the switch answered and turned the login down (SNMPv3
+only: an unknown user, a wrong authentication password), or its name
+leads to no address. Tried against a real snmpd with Debian 13's
+python3-ezsnmp 1.1.0. The netsnmp transport cannot tell: its "nothing"
+stays "the switch does not see the MAC", as before.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-from .lookup import Port
+from .lookup import FAILED, REFUSED, SILENT, UNREACHABLE, Port, Unanswered
 
 FDB_PORT = '.1.3.6.1.2.1.17.4.3.1.2'            # dot1dTpFdbPort
 BASE_PORT_IFINDEX = '.1.3.6.1.2.1.17.1.4.1.2'   # dot1dBasePortIfIndex
@@ -118,10 +128,36 @@ def _session_class():
     return Session
 
 
+class NoAnswer(Exception):
+    """A transport's word for "the switch gave nothing to go on"; WHY is
+    one of lookup's SILENT, REFUSED, UNREACHABLE, FAILED."""
+
+    def __init__(self, why: str):
+        super().__init__(why)
+        self.why = why
+
+
+def why(exc: Exception) -> str:
+    """What kind of failure the library's exception is. Its class name
+    and a few fixed phrases of Net-SNMP are looked at; its text is never
+    kept or logged (it may hold what was sent)."""
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    if 'timeout' in name or 'timed out' in text:
+        return SILENT
+    if ('unknown user' in text or 'authentication failure' in text
+            or 'wrong digest' in text or 'unsupported security level' in text):
+        return REFUSED
+    if 'connection' in name or 'create snmp handle' in text:
+        return UNREACHABLE
+    return FAILED
+
+
 class EzSnmp:
-    """The transport: one question, one answer. A switch that does not
-    answer (away, wrong credentials, no such VLAN) is "nothing" - the
-    lookup goes on to the next switch - and is said in the log."""
+    """The transport: one question, one answer. get() gives the value,
+    None when the switch answers that there is no such thing, and raises
+    NoAnswer when the switch gives nothing to go on (away, wrong
+    credentials, no such VLAN) - which is also said in the log."""
 
     def __init__(self, timeout: int = 2, retries: int = 1, log=None):
         self.timeout = timeout
@@ -132,18 +168,19 @@ class EzSnmp:
         return _session_class()(hostname=host, timeout=self.timeout,
                                 retries=self.retries, use_numeric=True, **how)
 
-    def _failed(self, what: str, host: str, exc: Exception) -> None:
+    def _failed(self, what: str, host: str, exc: Exception) -> str:
+        kind = why(exc)
         if self.log is not None:
             # the exception's class only: its text may hold what was sent
-            self.log.warning('snmp %s on %s: %s', what, host,
-                             type(exc).__name__)
+            self.log.warning('snmp %s on %s: no answer to go on (%s, %s)',
+                             what, host, kind, type(exc).__name__)
+        return kind
 
     def get(self, host: str, how: dict, oid: str):
         try:
             variable = self._session(host, how).get(oid)
         except Exception as exc:
-            self._failed('get', host, exc)
-            return None
+            raise NoAnswer(self._failed('get', host, exc)) from None
         if variable is None or variable.snmp_type in NOTHING:
             return None
         return variable.value
@@ -168,7 +205,8 @@ _NETSNMP_LEVELS = {'no_auth_or_privacy': 'noAuthNoPriv',
 
 class NetSnmp:
     """The same transport on the netsnmp binding. It says "nothing"
-    by itself (None) when a switch does not answer."""
+    by itself (None) when a switch does not answer, and this transport
+    cannot tell that from "no such thing": it never raises NoAnswer."""
 
     def __init__(self, timeout: int = 2, retries: int = 1, log=None,
                  library=None):
@@ -254,15 +292,28 @@ class Switches:
             community = '%s@%d' % (community, vlan)
         return {'version': 2, 'community': community}
 
+    def _ask(self, switch, vlan, oid: str) -> str | None:
+        """One answer of SWITCH, or Unanswered when it gives none."""
+        try:
+            return _answer(self.transport.get(switch.name,
+                                              self._how(switch, vlan), oid))
+        except NoAnswer as exc:
+            raise Unanswered(switch.name, exc.why) from None
+
     def _get(self, switch, vlan, oid: str) -> str | None:
-        return _answer(self.transport.get(switch.name, self._how(switch, vlan),
-                                          oid))
+        """The same for a question whose answer can be done without: no
+        answer is "nothing"."""
+        try:
+            return self._ask(switch, vlan, oid)
+        except Unanswered:
+            return None
 
     def find_port(self, switch, vlan: int | None, mac: str) -> Port | None:
-        """The port SWITCH sees MAC on in VLAN; None when it does not
-        see it. A trunk comes back marked as one - the caller decides
-        what that means."""
-        bridge_port = self._get(switch, vlan, '%s.%s' % (FDB_PORT,
+        """The port SWITCH sees MAC on in VLAN; None when it answers that
+        it does not see it; Unanswered when it gives no answer to the
+        first question (then nothing is known). A trunk comes back
+        marked as one - the caller decides what that means."""
+        bridge_port = self._ask(switch, vlan, '%s.%s' % (FDB_PORT,
                                                          mac_index(mac)))
         if bridge_port is None or not bridge_port.isdigit():
             return None

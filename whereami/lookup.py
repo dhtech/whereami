@@ -16,6 +16,13 @@ The way the old whereami did it:
 A port that is a trunk is the way to another switch, not where the
 client is - that answer is refused.
 
+A switch that gives no answer to work with is NOT a switch that does
+not see the client: "it did not answer" (away, or it does not let
+whereami ask), "it turned down whereami's login" and "it could not be
+reached by its name" are each said as what they are, in an 'unanswered'
+step and in the final error, and the lookup goes on to the next switch
+where there is one.
+
 lookup() yields what it learns step by step (the page shows the steps
 as they come) and ends with a 'done' or an 'error'. Two things are
 there for the page's log, for whoever has to find out why a lookup
@@ -42,8 +49,47 @@ class Port:
     trunk: bool = False
 
 
+# why a switch gave nothing to go on
+SILENT = 'silent'            # nothing came back in time
+REFUSED = 'refused'          # it answered: whereami's login is not its own
+UNREACHABLE = 'unreachable'  # its name leads to no address
+FAILED = 'failed'            # anything else (the server's log has it)
+
+_WHY = {
+    SILENT: '%(switch)s did not answer over SNMP: it is away, or it does not '
+            'let whereami ask (its SNMP settings%(vlan)s).',
+    REFUSED: '%(switch)s answered, but turned down whereami\'s SNMP login: '
+             'the account or its passwords on the switch are not the ones '
+             'whereami has.',
+    UNREACHABLE: '%(switch)s could not be asked over SNMP: its name leads '
+                 'to no address.',
+    FAILED: '%(switch)s could not be asked over SNMP (the reason is in the '
+            'server\'s log).',
+}
+
+
+class Unanswered(Exception):
+    """A switch that was asked and gave nothing to go on - which is not
+    the same as a switch that does not see the MAC."""
+
+    def __init__(self, switch: str, why: str = SILENT):
+        super().__init__('%s: %s' % (switch, why))
+        self.switch = switch
+        self.why = why if why in _WHY else FAILED
+
+    def words(self, vlan=None) -> str:
+        """What happened, for the person looking at the page."""
+        on = ', or VLAN %d is not on it' % vlan if isinstance(vlan, int) else ''
+        return _WHY[self.why] % {'switch': self.switch, 'vlan': on}
+
+
 def error(message: str) -> dict:
     return {'type': 'error', 'message': message}
+
+
+def unanswered(exc: Unanswered, vlan) -> dict:
+    return {'type': 'unanswered', 'switch': exc.switch, 'why': exc.why,
+            'message': exc.words(vlan)}
 
 
 def _hex(value) -> str | None:
@@ -56,7 +102,10 @@ def lookup(ip: str, leases, plan, snmp) -> Iterator[dict]:
     leases.active(ip)  -> {'mac', 'remote_id', 'circuit_id'} or None
     plan.switch(name)  -> a switch (name, layer) or None
     plan.access_switches_on_vlan(vlan) -> switches
-    snmp.find_port(switch, vlan, mac)  -> Port or None
+    snmp.find_port(switch, vlan, mac)  -> Port, or None when the switch
+                                          answers that it does not see
+                                          the MAC; raises Unanswered when
+                                          it gives no answer to go on
     """
     lease = leases.active(ip)
     if lease is None:
@@ -90,7 +139,12 @@ def lookup(ip: str, leases, plan, snmp) -> Iterator[dict]:
             port = Port(circuit.interface or '')
         else:
             yield {'type': 'asking', 'switch': switch.name}
-            port = snmp.find_port(switch, circuit.vlan, mac)
+            try:
+                port = snmp.find_port(switch, circuit.vlan, mac)
+            except Unanswered as exc:
+                yield error(exc.words(circuit.vlan) + ' So whereami cannot '
+                            'say which of its ports you are on.')
+                return
         if port is None:
             yield error('%s does not see your MAC address (%s) on that '
                         'VLAN.' % (switch.name, mac))
@@ -107,12 +161,30 @@ def lookup(ip: str, leases, plan, snmp) -> Iterator[dict]:
                         % circuit.vlan)
             return
         candidates = []
+        quiet = []      # asked, and gave nothing to go on
         for switch in switches:
             yield {'type': 'asking', 'switch': switch.name}
-            port = snmp.find_port(switch, circuit.vlan, mac)
+            try:
+                port = snmp.find_port(switch, circuit.vlan, mac)
+            except Unanswered as exc:
+                quiet.append(switch.name)
+                yield unanswered(exc, circuit.vlan)
+                continue
             if port is not None:
                 candidates.append((switch, port))
                 break
+        if not candidates and len(quiet) == len(switches):
+            yield error('No access switch on VLAN %d gave an answer over '
+                        'SNMP (%s), so whereami cannot look for your MAC '
+                        'address (%s).' % (circuit.vlan, ', '.join(quiet),
+                                           mac))
+            return
+        if not candidates and quiet:
+            yield error('None of the access switches on VLAN %d that '
+                        'answered sees your MAC address (%s). You may be '
+                        'on one that gave no answer over SNMP: %s.'
+                        % (circuit.vlan, mac, ', '.join(quiet)))
+            return
         if not candidates:
             yield error('None of the access switches on VLAN %d sees your '
                         'MAC address (%s).' % (circuit.vlan, mac))
